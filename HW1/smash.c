@@ -64,7 +64,7 @@ int main(int argc, char* argv[])
 			pid_t child_pid = fork();
 			if (child_pid == -1) {
 			    //fork failed
-			    //perror("smash error: fork failed");
+			    perror("smash error: fork failed");
 			    freeCMD(cmd);
 			    continue;
 			}
