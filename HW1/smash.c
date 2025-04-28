@@ -26,6 +26,25 @@ int main(int argc, char* argv[])
 	ParsedCommand* cmd;
 	int parse_result;
 	int execute_result;
+	
+	struct sigaction sa;
+	//struct for signal detection and handling
+	sa.sa_handler = ctrl_c_handler;
+	sigemptyset(&sa.sa_mask);
+	sa.sa_flags = 0;
+	if (sigaction(SIGINT, &sa, NULL) == -1) {
+	    perror("smash error: sigaction failed");
+	    exit(1);
+	}
+	
+	sa.sa_handler = ctrl_z_handler;
+	sigemptyset(&sa.sa_mask);
+	sa.sa_flags = 0;
+	if (sigaction(SIGTSTP, &sa, NULL) == -1) {
+	    perror("smash error: sigaction failed");
+	    exit(1);
+	}
+	
 	while(1) {
 		printf("smash > ");
 		fgets(_line, CMD_LENGTH_MAX, stdin);
