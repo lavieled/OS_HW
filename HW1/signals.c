@@ -2,12 +2,11 @@
 #include "signals.h"
 #include <unistd.h>
 #include <stdio.h>
-#include <time.h>
-#include <stdlib.h>
 #include <signal.h>
+#include <time.h>
 
-extern pid_t fg_pid; // The PID of the process running in the foreground
-extern ParsedCommand* fg_cmd; // The command currently running in the foreground
+extern pid_t fg_pid;
+extern ParsedCommand* fg_cmd;
 
 void ctrl_c_handler(int sig) {
     printf("smash: caught CTRL+C\n");
@@ -30,7 +29,6 @@ void ctrl_z_handler(int sig) {
         if (kill(fg_pid, SIGSTOP) == 0) {
             printf("smash: process %d was stopped\n", fg_pid);
 
-            // Add the stopped process to the jobs table
             Job* job = MALLOC_VALIDATED(Job, sizeof(Job));
             job->pid = fg_pid;
             job->cmd = fg_cmd;
