@@ -688,19 +688,18 @@ void handleDiff(ParsedCommand* cmd, bool bg){
 	FREE FUNC
 ==================*/
 void freeCMD(ParsedCommand* cmd){
-	if (cmd == NULL) return; //gaurd
-	free(cmd->cmd);
-	free(cmd->line);
-	for (int i = 0; i < ARGS_NUM_MAX; i++)
-		free(cmd->args[i]);
-	free(cmd);
-	cmd = NULL;
+	if (!cmd) return;
+    if (cmd->line) free(cmd->line);
+    if (cmd->cmd) free(cmd->cmd);
+    for (int i = 0; i < ARGS_NUM_MAX; i++) {
+        if (cmd->args[i]) free(cmd->args[i]);
+    }
+    free(cmd);
 }
 void freeJob(Job* job){
-	if(job == NULL) return;
-	freeCMD(job->cmd);
-	free(job);
-	job = NULL;
+	if (job) {
+        freeCMD(job->cmd);  
+        free(job);
 }
 void removeJob(pid_t pid){
 	for (int i = 0; i < JOBS_NUM_MAX; i++)
@@ -713,3 +712,16 @@ void removeJob(pid_t pid){
 	}
 	
 }
+ParsedCommand* cloneParsedCommand(ParsedCommand* src) {
+    ParsedCommand* dst = MALLOC_VALIDATED(ParsedCommand, sizeof(ParsedCommand));
+    dst->line = strdup(src->line);
+    dst->cmd = strdup(src->cmd);
+    dst->nargs = src->nargs;
+
+    for (int i = 0; i < ARGS_NUM_MAX; i++) {
+        dst->args[i] = src->args[i] ? strdup(src->args[i]) : NULL;
+    }
+
+    return dst;
+}
+
