@@ -1,7 +1,8 @@
-#include "commands.h"
+// signals.c
 #include "signals.h"
-#include <unistd.h>
+#include "commands.h"
 #include <stdio.h>
+#include <unistd.h>
 #include <signal.h>
 #include <time.h>
 
@@ -18,6 +19,7 @@ void ctrl_c_handler(int sig) {
             perror("smash error: kill failed");
         }
     }
+
     fg_pid = -1;
     fg_cmd = NULL;
 }
@@ -31,7 +33,7 @@ void ctrl_z_handler(int sig) {
 
             Job* job = MALLOC_VALIDATED(Job, sizeof(Job));
             job->pid = fg_pid;
-            job->cmd = fg_cmd;
+            job->cmd = cloneParsedCommand(fg_cmd); // copy for mem leak?
             job->start = time(NULL);
             job->state = STOPPED;
             addJob(job);
@@ -39,6 +41,7 @@ void ctrl_z_handler(int sig) {
             perror("smash error: kill failed");
         }
     }
+
     fg_pid = -1;
     fg_cmd = NULL;
 }
