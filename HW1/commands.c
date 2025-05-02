@@ -14,7 +14,9 @@ void perrorSmash(const char* cmd, const char* msg)
 //example function for parsing commands
 int parseCommand(char* line, ParsedCommand* cmd)
 {
+	memset(cmd, 0, sizeof(*cmd)); // initializing here prevent random crashes, dont change
 	cmd->line = strdup(line);
+	cmd->line[strlen(line)-1] = '\0';
 	char* delimiters = " \t\n"; //parsing should be done by spaces, tabs or newlines
 	char* token  = strtok(line, delimiters); //read strtok documentation - parses string by delimiters
 	if(!token)
@@ -57,8 +59,8 @@ int executeCommand (ParsedCommand* cmd){
 void handleShowpid(ParsedCommand* cmd, bool bg){ // ready
 	
 	// Input Validation:
-	if (bg && cmd->nargs > 1 || 
-		!bg && cmd->nargs > 0){
+	if ((bg && cmd->nargs > 1) || 
+		(!bg && cmd->nargs > 0)){
 		//printf("show pid fail, more than 0 args\n");
 		perrorSmash(cmd->cmd, "expected 0 arguments"); // didnt happened
 		return;
@@ -100,8 +102,8 @@ void handleShowpid(ParsedCommand* cmd, bool bg){ // ready
 
 void handlePwd(ParsedCommand* cmd, bool bg){ //ready
 	// Input Validation:	
-	if (bg && cmd->nargs > 1 || 
-		!bg && cmd->nargs > 0){
+	if ((bg && cmd->nargs > 1) || 
+		(!bg && cmd->nargs > 0)){
 		//printf("show pid fail, more than 0 args\n");
 		perrorSmash(cmd->cmd, "expected 0 arguments");
 		return;
@@ -134,7 +136,7 @@ void handlePwd(ParsedCommand* cmd, bool bg){ //ready
 	else if (pid == 0){
 		setpgrp();
 		if (!getcwd(path, sizeof(path))) {
-			perror("smash error: pwd failed");
+			perror("smash error: getcwd failed");
 			exit(SMASH_FAIL);
 		}
 		printf("%s\n", path);
@@ -142,7 +144,7 @@ void handlePwd(ParsedCommand* cmd, bool bg){ //ready
 	}
 	else {
 		// fork() failed
-		perror("smash error: pwd failed");
+		perror("smash error: fork failed");
 		freeJob(job);
 		exit(SMASH_QUIT);
 	}
@@ -157,21 +159,22 @@ void handleCd(ParsedCommand* cmd, bool bg){
 	// common resources:
 	char thisDir[PATH_MAX] = {0};
 	if (!getcwd(thisDir, sizeof(thisDir))) {
-		perror("smash error: cd failed");
+		perror("smash error: getcwd failed");
 		return;
 	}
 
 	//run in front:
 	if(!bg){
 		if (!strcmp(cmd->args[1], "-")){
-			if (lastdir == NULL){ // validation of history
+			if (lastdir[0] == '\0'){ // validation of history
 				perrorSmash(cmd->cmd, "old pwd not set");
 			}
 			else if(chdir(lastdir) != 0){
 				//failed
-				perror("smash error: cd failed");
+				perror("smash error: chdir failed");
 				freeCMD(cmd);
-				exit(SMASH_FAIL);
+				strcpy(lastdir, thisDir);
+				return;
 			}
 			strcpy(lastdir, thisDir);
 			freeCMD(cmd); // ran and wont be used
@@ -179,12 +182,19 @@ void handleCd(ParsedCommand* cmd, bool bg){
 		}
 		else if(!(strcmp(cmd->args[1], ".."))){
 			//check if currently in /
-			if (strcmp(thisDir, "/")) freeCMD(cmd); // do nothing- ran and wont be used
-			else if(chdir(cmd->args[1]) != 0){
-				//failed
-				perror("smash error: cd failed");
-				freeCMD(cmd);
-				exit(SMASH_FAIL);
+			if (strcmp(thisDir, "/") != 0){
+				strcpy(lastdir, thisDir);
+				int i = strlen(thisDir);
+				while (lastdir[i] != '/')
+				{
+					lastdir[i] = '\0';
+					i--;
+				}
+				if(chdir(lastdir) != 0){
+					// chdr fail handle
+					perror("smash error: chdir failed");
+				}
+				
 			}
 			strcpy(lastdir, thisDir);
 			freeCMD(cmd);
@@ -217,42 +227,57 @@ void handleCd(ParsedCommand* cmd, bool bg){
 	else if (pid == 0){
 		setpgrp();
 		if (!strcmp(cmd->args[1], "-")){
-			if (lastdir == NULL){ // validation of history
+			if (lastdir[0] == '\0'){ // validation of history
 				perrorSmash(cmd->cmd, "old pwd not set");
-				exit(SMASH_FAIL);
 			}
-			if(chdir(lastdir) != 0){
+			else if(chdir(lastdir) != 0){
 				//failed
-				perror("smash error: cd failed");
+				perror("smash error: chdir failed");
+				freeCMD(cmd);
 				exit(SMASH_FAIL);
 			}
 			strcpy(lastdir, thisDir);
+			freeCMD(cmd); // ran and wont be used
 			exit(SMASH_SUCCESS);
 		}
 		else if(!(strcmp(cmd->args[1], ".."))){
 			//check if currently in /
-			if (strcmp(thisDir, "/")) exit(SMASH_SUCCESS); // do nothing
-			if(chdir(cmd->args[1]) != 0){
-				//failed
-				perror("smash error: cd failed");
-				exit(SMASH_FAIL);
+			if (strcmp(thisDir, "/") != 0){
+				strcpy(lastdir, thisDir);
+				int i = strlen(thisDir);
+				while (lastdir[i] != '/')
+				{
+					lastdir[i] = '\0';
+					i--;
+				}
+				if(chdir(lastdir) != 0){
+					// chdr fail handle
+					perror("smash error: chdir failed");
+					exit(SMASH_FAIL);
+				}
+				
 			}
 			strcpy(lastdir, thisDir);
+			freeCMD(cmd);
 			exit(SMASH_SUCCESS);
 		}
 		else{
-			int error = chdir(cmd->args[1]);
-			if (error == 0) strcpy(lastdir, thisDir);
+			int error = chdir(cmd->args[1]); // changing the directory and catch the return value
+			if (error == 0) strcpy(lastdir, thisDir); // on success update history
+			// catch the 2 supported errors event:
 			else if (error == ENONET) perrorSmash(cmd->cmd, " target directory does not exist");
-			else if (error == ENOTDIR) perrorSmash(cmd->cmd,strcat(cmd->args[1] ,"not a directory"));
+			else if (error == ENOTDIR) perrorSmash(cmd->cmd,strcat(cmd->args[1] ,": not a directory"));
+			// catch any other error:
 			else{
-				perror("smash error: cd failed");
-				exit(SMASH_FAIL);
-			} 
-
+				 perror("smash error: chdir failed");
+				 exit(SMASH_FAIL);
+			}
 		}
+		freeCMD(cmd);
 		exit(SMASH_SUCCESS);
+		
 	}
+		
 	else{
 		// fork failed
 		perror("smash error: cd failed");
@@ -260,24 +285,20 @@ void handleCd(ParsedCommand* cmd, bool bg){
 		exit(SMASH_QUIT);
 	} 
 	
-
-
-
-
 }
 
-/*======
+/*============================================================================
  JOB HANDLING EVENTS
- - addJob: on background execution adding a Job to the JobTable
+ - addJob: on background execution adding a Job to the JobTable, called by the parent
  - printJob: printing all background Jobs
- - updateJobTable: searching for finnished children, and call remove on them
- - removeJob: get pid and remove the matching job->pid from JobTable 
-=======*/
+ - updateJobTable: searching for finnished children, and call remove on them, called by smash main befor every command
+ - removeJob: get pid and remove the matching job->pid from JobTable, called by updateJobTable
+=============================================================================*/
 void addJob(Job* job){
 	time_t now = time(NULL);
 	job->jid = min_jid_free +1;
 	job->start = now;
-	job->state = RUNNING; 
+	job->state = (job->state == STOPPED) ? STOPPED : RUNNING; 
 	jobsTable[min_jid_free] = job;
 	for (int i = 0; i < JOBS_NUM_MAX; i++){ // searching next value for min job id
 		if(jobsTable[i] == NULL){
@@ -297,16 +318,15 @@ void printJobs(ParsedCommand* cmd, bool bg){
 	}
 	// setting up recources:
 	time_t now = time(NULL);
-	char status[10];
 	if(!bg){
 	// loop printing each job:
 	for(int i =0; i< JOBS_NUM_MAX; i++){
 		if(jobsTable[i] == NULL) continue; //free place, dont print
 		char* status = jobsTable[i]->state == RUNNING ? "" : "(stopped)";
-		printf("[%d] %s: %d %.0f %s\n", 
-		jobsTable[i]->jid,
-		jobsTable[i]->cmd->line,
-		jobsTable[i]->pid,
+		printf("[%d] %s: %d %.0f secs %s\n", 
+		(*jobsTable[i]).jid,
+		(*jobsTable[i]).cmd->line,
+		(*jobsTable[i]).pid,
 		difftime(now, jobsTable[i]->start),
 		status);
 	}
@@ -375,7 +395,7 @@ void updateJobTable(){
 }
 /*==========================================================
 ======================JOB'S STUFF END=======================
-/*==========================================================*/
+============================================================*/
 
 void handleKill( ParsedCommand* cmd, bool bg){
 	int signal;
@@ -659,7 +679,7 @@ void handleDiff(ParsedCommand* cmd, bool bg){
 	}
 	if (stat(cmd->args[2], &st) < 0){
 		if (errno == ENOENT){
-			perrorSmash(cmd->cmd, "expected valid paths for files");
+			perrorSmash(cmd->cmd, "expected valid paths for files"); // works 
 			freeCMD(cmd);
 			return;
 		}
@@ -673,55 +693,114 @@ void handleDiff(ParsedCommand* cmd, bool bg){
 	FILE *fp1 = fopen(cmd->args[1], "r");
     FILE *fp2 = fopen(cmd->args[2], "r");
 	if (fp1 == NULL || fp2 == NULL) {
-		perrorSmash(cmd->cmd, "paths are not files");
+		perrorSmash(cmd->cmd, "paths are not files"); // doesnt work
 		freeCMD(cmd);
         return ;
     }
 
 	// TODO: compare the files
+	char c1;
+	char c2;
+	if(!bg){
+	do
+	{
+		c1 = fgetc(fp1);
+		c2 = fgetc(fp2);
+		if (c1 != c2)
+			{
+				printf("1");
+				freeCMD(cmd);
+				return;
+			}
+	} while (c1 != EOF && c2 != EOF);
 	
-    
-    
+	if (c1 == EOF && c2 == EOF){
+		printf("0\n");
+	}
+	else{
+		printf("1\n");
+	}
+	freeCMD(cmd);
+    return;
+	}
+
+	// background
+	Job* job = MALLOC_VALIDATED(Job, sizeof(Job));
+	job->cmd = cmd;
+	pid_t pid = fork();
+	if(pid > 0){
+		job->pid = pid;
+		addJob(job);
+		return;
+	}
+	else if(pid == 0){
+		do
+	{
+		c1 = fgetc(fp1);
+		c2 = fgetc(fp2);
+		if (c1 != c2)
+			{
+				printf("1");
+				freeCMD(cmd);
+				exit(SMASH_SUCCESS);
+			}
+	} while (c1 != EOF && c2 != EOF);
+	
+	if (c1 == EOF && c2 == EOF){
+		printf("0\n");
+	}
+	else{
+		printf("1\n");
+	}
+	freeCMD(cmd);
+    exit(SMASH_SUCCESS);
+
+	}
+
+	else{
+		perror("smash error: fork failed");
+		freeJob(job);
+		exit(SMASH_QUIT);
+	}
+
 }
 
 /*==================
 	FREE FUNC
 ==================*/
 void freeCMD(ParsedCommand* cmd){
-	if (!cmd) return;
-    if (cmd->line) free(cmd->line);
-    if (cmd->cmd) free(cmd->cmd);
-    for (int i = 0; i < ARGS_NUM_MAX; i++) {
-        if (cmd->args[i]) free(cmd->args[i]);
-    }
-    free(cmd);
+	if (cmd == NULL) return; //gaurd
+	free(cmd->cmd);
+	free(cmd->line);
+	for (int i = 0; i < ARGS_NUM_MAX; i++){
+		if (cmd->args[i])
+			free(cmd->args[i]);
+	}
+	free(cmd);
+	cmd = NULL;
 }
 void freeJob(Job* job){
-	if (job) {
-        freeCMD(job->cmd);  
-        free(job);
+	if(job == NULL) return;
+	freeCMD(job->cmd);
+	free(job);
+	job = NULL;
 }
 void removeJob(pid_t pid){
-	for (int i = 0; i < JOBS_NUM_MAX; i++)
+	int i = 0;
+	for ( ; i < JOBS_NUM_MAX; i++)
 	{
 		if(jobsTable[i] != NULL && jobsTable[i]->pid == pid){
 			freeJob(jobsTable[i]);
+			jobsTable[i] = NULL;
 			min_jid_free = (min_jid_free < i) ? min_jid_free : i ;
-			return;
+			break;
 		}
 	}
+	for ( ; i < JOBS_NUM_MAX; i++)
+	{
+		if(jobsTable[i] != NULL)
+			jobsTable[i]->jid--; // update all other Job ID after the remmoval
+	}
+	
 	
 }
-ParsedCommand* cloneParsedCommand(ParsedCommand* src) {
-    ParsedCommand* dst = MALLOC_VALIDATED(ParsedCommand, sizeof(ParsedCommand));
-    dst->line = strdup(src->line);
-    dst->cmd = strdup(src->cmd);
-    dst->nargs = src->nargs;
-
-    for (int i = 0; i < ARGS_NUM_MAX; i++) {
-        dst->args[i] = src->args[i] ? strdup(src->args[i]) : NULL;
-    }
-
-    return dst;
-}
-
