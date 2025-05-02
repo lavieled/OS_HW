@@ -114,6 +114,8 @@ void removeJob(pid_t pid);
 void freeJob(Job* job);
 void handleQuit(ParsedCommand* cmd, bool bg);
 void handleDiff(ParsedCommand* cmd, bool bg);
+ParsedCommand* cloneParsedCommand(ParsedCommand* src);
+
 /*
 * global variables
 */
