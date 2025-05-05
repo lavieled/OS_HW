@@ -3,6 +3,8 @@
 /*=============================================================================
 * includes, defines, usings
 =============================================================================*/
+#define _XOPEN_SOURCE 700
+#define _POSIX_C_SOURCE 200809L
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdbool.h>
@@ -11,9 +13,9 @@
 #include <sys/wait.h>   // waitpid()
 #include <string.h>  // strtok, strcmp, strdup
 #include <linux/limits.h> // PATH_MAX
-#include <errno.h> //
-#include <time.h>
-#include <sys/stat.h>
+#include <errno.h> // error handling
+#include <time.h> // time, difftime
+#include <sys/stat.h> 
 
 
 #define CMD_LENGTH_MAX 120
@@ -84,7 +86,6 @@ typedef struct {
 
 // Struct for handling jobs
 typedef enum { RUNNING, STOPPED, DONE } job_state;
-
 typedef struct {
     int jid;
     pid_t pid;
@@ -92,6 +93,7 @@ typedef struct {
     job_state state;
     ParsedCommand* cmd;
 } Job;
+
 
 
 
@@ -106,7 +108,7 @@ void handleCd( ParsedCommand* cmd, bool bg);
 void printJobs( ParsedCommand* cmd, bool bg);
 void addJob(Job* job);
 void updateJobTable();
-void handleKill( ParsedCommand* cmd, bool bg);
+void handleKill( ParsedCommand* cmd/*, bool bg*/);
 void handleForeground( ParsedCommand* cmd, bool bg);
 void handleBackground( ParsedCommand* cmd, bool bg);
 void freeCMD(ParsedCommand* cmd);
@@ -114,12 +116,11 @@ void removeJob(pid_t pid);
 void freeJob(Job* job);
 void handleQuit(ParsedCommand* cmd, bool bg);
 void handleDiff(ParsedCommand* cmd, bool bg);
-ParsedCommand* cloneParsedCommand(ParsedCommand* src);
-
 /*
 * global variables
 */
-static char lastdir[PATH_MAX]= "\0";
-static Job* jobsTable[JOBS_NUM_MAX];
-static int min_jid_free = 0;
+extern char lastdir[PATH_MAX];
+extern Job* jobsTable[JOBS_NUM_MAX];
+extern int min_jid_free;
+extern pid_t front_pid;
 #endif //COMMANDS_H
