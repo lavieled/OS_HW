@@ -18,6 +18,7 @@
 #include <sys/stat.h> 
 
 
+
 #define CMD_LENGTH_MAX 120
 #define ARGS_NUM_MAX 20
 #define JOBS_NUM_MAX 100
@@ -63,7 +64,6 @@ static inline void* _validatedMalloc(size_t size)
 typedef enum  {
 	INVALID_COMMAND = 0,
     VALID_COMMMAND =1,
-	//feel free to add more values here or delete this
 } ParsingError;
 
 typedef enum {
@@ -101,14 +101,14 @@ typedef struct {
 * global functions
 =============================================================================*/
 int parseCommand(char* line, ParsedCommand* cmd);
-int executeCommand (ParsedCommand* cmd);
+int executeCommand (ParsedCommand* cmd, bool bg);
 void handleShowpid( ParsedCommand* cmd, bool bg);
 void handlePwd( ParsedCommand* cmd, bool bg);
 void handleCd( ParsedCommand* cmd, bool bg);
 void printJobs( ParsedCommand* cmd, bool bg);
 void addJob(Job* job);
 void updateJobTable();
-void handleKill( ParsedCommand* cmd/*, bool bg*/);
+void handleKill( ParsedCommand* cmd, bool bg);
 void handleForeground( ParsedCommand* cmd, bool bg);
 void handleBackground( ParsedCommand* cmd, bool bg);
 void freeCMD(ParsedCommand* cmd);
