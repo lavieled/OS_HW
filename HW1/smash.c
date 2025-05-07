@@ -58,8 +58,7 @@ int main(int argc, char* argv[])
         }                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       
 
         strcpy(_cmd, _line);  // copy before modifying
-	//new
-	 bool bg = false;
+	bool bg = false;
         char* amp = strrchr(_cmd, '&');
         if (amp && (amp == _cmd || *(amp - 1) == ' ')) {
             bg = true;
@@ -68,23 +67,28 @@ int main(int argc, char* argv[])
         parse_result = parseCommand(_cmd, cmd);
 
         if (parse_result == INVALID_COMMAND) {
-            free(cmd); // only structure allocated
+            freeCMD(cmd); // only structure allocated
+		cmd = NULL;
             continue;
         }
 
         updateJobTable();
-        execute_result = executeCommand(cmd);
+        execute_result = executeCommand(cmd, bg);
 
-        if (execute_result == 0) {
-        	int ext_result = executeExternalCommand(cmd, bg);
-		if (ext_result != 0) {
-        		//free cmd if exec failed and not job
-       		 freeCMD(cmd);
-   		 }
-        } else if (execute_result == 2) {
-	    freeCMD(cmd); 
-	    break;        // exit loop 
-	} else {
+	if (execute_result == 2) {
+	    freeCMD(cmd);        // Exit command
+	    break;
+	}
+
+	if (execute_result == 0) {
+	    // Not internal -> external
+	    int ext_result = executeExternalCommand(cmd, bg);
+	    if (ext_result != 0 && !bg) {
+		// Failed external cmd, not added to jobs
+		cmd = NULL;//safty
+	    }
+	} else if (!bg) {
+	    // Successful internal command
 	    freeCMD(cmd);
 	}
 	}
@@ -93,9 +97,10 @@ int main(int argc, char* argv[])
 
 
 int executeExternalCommand(ParsedCommand* cmd, bool bg){
+		
 	int status;
 	Job* job = MALLOC_VALIDATED(Job, sizeof(Job));
-	job->cmd = cmd;
+	job->cmd = cmd; 
 	// for handling exec failed:
 	int pipefds[2];
 	if (pipe(pipefds)) {
@@ -110,11 +115,13 @@ int executeExternalCommand(ParsedCommand* cmd, bool bg){
 	if (front_pid == 0){
 		setpgrp();
 		close(pipefds[0]); // we dont read in child
+		if (bg)
+			cmd->args[cmd->nargs] = '\0';
 		execv(cmd->cmd, cmd->args);
 		// if exe fail do:
 		write(pipefds[1], &errno, sizeof(int));
 		close(pipefds[1]);//close
-		free(job);
+		freeJob(job);
 		exit(1);
 	}
 	else if(front_pid > 0){
@@ -128,7 +135,7 @@ int executeExternalCommand(ParsedCommand* cmd, bool bg){
 		if (r == sizeof err) {
 			// CHILD fails execv
 			fprintf(stderr, "smash error: execv failed: %s\n", strerror(err));
-			free(job);
+			freeJob(job);
 			return 1;
 		}
 		close(pipefds[0]);
@@ -141,7 +148,7 @@ int executeExternalCommand(ParsedCommand* cmd, bool bg){
                 job->pid = front_pid;
                 addJob(job);
             } else {
-                free(job);
+                freeJob(job);
             }
             front_pid = -1;
 
@@ -159,4 +166,4 @@ int executeExternalCommand(ParsedCommand* cmd, bool bg){
 		exit(SMASH_QUIT);
 	}
 	return 0;
-}
+}//function to run external commads
