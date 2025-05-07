@@ -27,28 +27,23 @@ int parseCommand(char* line, ParsedCommand* cmd)
     cmd->nargs = 0;
 
 	while ((token = strtok(NULL, delimiters))) {
-	if (strcmp(token, "&") == 0) {
-        continue; // already handled in main
-    }
-    if (cmd->nargs + 1 >= ARGS_NUM_MAX) {
-        // skip parsing to avoid overflow and leak
-        break;
-    }
-    ++cmd->nargs;
-    cmd->args[cmd->nargs] = strdup(token);
-	}
-
+	    if (cmd->nargs + 1 >= ARGS_NUM_MAX) {
+		// skip parsing to avoid overflow and leak
+		break;
+	    }
+	    ++cmd->nargs;
+	    cmd->args[cmd->nargs] = strdup(token);
+		}
     return VALID_COMMMAND;
 }
 
 // Dispatcher for each command to the apropriate handler:
-int executeCommand (ParsedCommand* cmd){
-	bool bg = !strcmp(cmd->args[cmd->nargs],"&");
+int executeCommand (ParsedCommand* cmd, bool bg){
 	if (!strcmp(cmd->cmd , SHOWPID))		handleShowpid(cmd, bg);
 	else if(!strcmp(cmd->cmd , PWD)) 		handlePwd(cmd, bg);
 	else if(!strcmp(cmd->cmd , CD)) 		handleCd(cmd, bg);
 	else if(!strcmp(cmd->cmd , JOBS)) 		printJobs(cmd, bg);
-	else if(!strcmp(cmd->cmd , KILL)) 		handleKill(cmd);
+	else if(!strcmp(cmd->cmd , KILL)) 		handleKill(cmd, bg);
 	else if(!strcmp(cmd->cmd , FOREGROUND)) handleForeground(cmd, bg);
 	else if(!strcmp(cmd->cmd , BACKGROUND)) handleBackground(cmd, bg);
 	else if(!strcmp(cmd->cmd , QUIT))		handleQuit(cmd, bg);
@@ -63,7 +58,6 @@ void handleShowpid(ParsedCommand* cmd, bool bg){ // ready
 	// Input Validation:
 	if ((bg && cmd->nargs > 1) || 
 		(!bg && cmd->nargs > 0)){
-		//printf("show pid fail, more than 0 args\n");
 		perrorSmash(cmd->cmd, "expected 0 arguments"); // didnt happened
 		return;
 	}
@@ -82,14 +76,14 @@ void handleShowpid(ParsedCommand* cmd, bool bg){ // ready
 	job->cmd = cmd;
 	pid_t pid = fork();
 	if (pid > 0){
-		// father signing his son up to JobTable:
 		job->pid = pid;
 		addJob(job);
 		return;
-	}
+	}// father signing his son up to JobTable:
 	else if (pid == 0){
 		setpgrp();
 		printf("smash pid is %d\n", smash_pid);
+		freeJob(job);
 		exit(SMASH_SUCCESS); // prevent duplicate of the remaining code in main
 	}
 	else{ 
@@ -136,9 +130,11 @@ void handlePwd(ParsedCommand* cmd, bool bg){
 		setpgrp();
 		if (!getcwd(path, sizeof(path))) {
 			perror("smash error: getcwd failed");
+			freeJob(job);
 			exit(SMASH_FAIL);
 		}
 		printf("%s\n", path);
+		freeJob(job);
 		exit(SMASH_SUCCESS);
 	}
 	else {
@@ -228,9 +224,11 @@ void handleCd(ParsedCommand* cmd, bool bg){
 			else if(chdir(lastdir) != 0){
 				//failed
 				perror("smash error: chdir failed");
+				freeJob(job);
 				exit(SMASH_FAIL);
 			}
 			strcpy(lastdir, thisDir);
+			freeJob(job);
 			exit(SMASH_SUCCESS);
 		}
 		else if(!(strcmp(cmd->args[1], ".."))){
@@ -246,11 +244,13 @@ void handleCd(ParsedCommand* cmd, bool bg){
 				if(chdir(lastdir) != 0){
 					// chdr fail handle
 					perror("smash error: chdir failed");
+					freeJob(job);
 					exit(SMASH_FAIL);
 				}
 				
 			}
 			strcpy(lastdir, thisDir);
+			freeJob(job);
 			exit(SMASH_SUCCESS);
 		}
 		else{
@@ -262,9 +262,11 @@ void handleCd(ParsedCommand* cmd, bool bg){
 			// catch any other error:
 			else{
 				 perror("smash error: chdir failed");
+				 freeJob(job);
 				 exit(SMASH_FAIL);
 			}
 		}
+		freeJob(job);
 		exit(SMASH_SUCCESS);
 		
 	}
@@ -287,7 +289,7 @@ void handleCd(ParsedCommand* cmd, bool bg){
 =============================================================================*/
 void addJob(Job* job){
 	time_t now = time(NULL);
-	job->jid = min_jid_free +1;
+	job->jid = min_jid_free;
 	job->start = now;
 	job->state = (job->state == STOPPED) ? STOPPED : RUNNING; 
 	jobsTable[min_jid_free] = job;
@@ -343,6 +345,7 @@ void printJobs(ParsedCommand* cmd, bool bg){
 			difftime(now, jobsTable[i]->start),
 			status);
 		}
+		freeJob(job);
 		exit(SMASH_SUCCESS);
 	}
 	else{
@@ -357,7 +360,6 @@ void printJobs(ParsedCommand* cmd, bool bg){
 void updateJobTable(){
 	pid_t cur_pid;
 	int status;
-	//job_state new_state;
 	// read all children that commit exit() without waiting
 	for (int i = 0; i < JOBS_NUM_MAX; i++)
 	{
@@ -379,8 +381,8 @@ void updateJobTable(){
 ======================JOB'S STUFF END=======================
 ============================================================*/
 
-void handleKill(ParsedCommand* cmd) {
-    if (cmd->nargs != 2) {
+void handleKill(ParsedCommand* cmd, bool bg) {
+    if ((cmd->nargs != 2 && !bg) || (cmd->nargs != 3 && bg)){
         perrorSmash(cmd->cmd, "invalid arguments");
         return;
     }
@@ -396,7 +398,7 @@ void handleKill(ParsedCommand* cmd) {
         return;
     }
 
-    if (jid <= 0 || jid > JOBS_NUM_MAX || jobsTable[jid - 1] == NULL) {
+    if (jid < 0 || jid > JOBS_NUM_MAX || jobsTable[jid] == NULL) {
         int len_msg = strlen("job id ") + strlen(cmd->args[2]) + strlen(" does not exist");
         char* msg = malloc(len_msg + 1);
         if (!msg) {
@@ -409,13 +411,43 @@ void handleKill(ParsedCommand* cmd) {
         return;
     }
 
-    pid_t pid = jobsTable[jid - 1]->pid;
-    if (kill(pid, signal) == -1) {
-        perror("smash error: kill failed");
-    } else {
-        printf("signal %d was sent to pid %d\n", signal, pid);
-    }
-}
+    if(!bg){
+		if (kill(jobsTable[jid]->pid, signal) == -1) {
+			perror("smash error: kill failed");
+		} else {
+			printf("signal %d was sent to pid %d\n", signal, jobsTable[jid]->pid);
+		}
+		return;
+	}
+
+	//background:
+	Job* job = MALLOC_VALIDATED(Job, sizeof(Job));
+	job->cmd = cmd;
+	pid_t pid = fork();
+	if(pid > 0){
+		// father sgining his son up to JobTable:
+		job->pid = pid;
+		addJob(job);
+		return;
+	}
+	else if(pid == 0){
+		setpgrp();
+		if (kill(jobsTable[jid]->pid, signal) == -1) {
+			perror("smash error: kill failed");
+		} else {
+			printf("signal %d was sent to pid %d\n", signal, jobsTable[jid]->pid);
+		}
+		freeJob(job);
+		exit (SMASH_SUCCESS);
+	}
+	else{
+		// fork failed
+		perror("smash error: cd failed");
+		freeJob(job);
+		exit(SMASH_QUIT);
+	}
+
+   }
 
 void handleForeground( ParsedCommand* cmd, bool bg){
 	// input validation:
@@ -426,7 +458,7 @@ void handleForeground( ParsedCommand* cmd, bool bg){
 	if(cmd->nargs == 0){
 		for (int i = JOBS_NUM_MAX-1 ; i >= 0; i--){
 			if (jobsTable[i] != NULL){
-				jid = i+1;
+				jid = i;
 				break;
 			}
 		}
@@ -447,7 +479,7 @@ void handleForeground( ParsedCommand* cmd, bool bg){
 			perrorSmash(cmd->cmd, "invalid arguments");
 			return;
 		}
-		if (jobsTable[jid-1] == NULL){
+		if (jobsTable[jid] == NULL){
 			int len_msg = strlen("job id ") + strlen(cmd->args[1]) + strlen(" does not exist");
 			char* msg = malloc(sizeof(char)*(len_msg+1));
 			snprintf(msg, len_msg+1, "job id %s does not exist", cmd->args[1]);
@@ -461,23 +493,24 @@ void handleForeground( ParsedCommand* cmd, bool bg){
 		perrorSmash(cmd->cmd, "invalid arguments");
 		return;
 	}
-	printf("[%d] %s\n", jid, jobsTable[jid-1]->cmd->cmd);
-	if (jobsTable[jid-1]->state == STOPPED){
-		kill(jobsTable[jid-1]->pid, SIGCONT);
+	printf("[%d] %s\n", jid, jobsTable[jid]->cmd->cmd);
+	if (jobsTable[jid]->state == STOPPED){
+		kill(jobsTable[jid]->pid, SIGCONT);
+		printf("%s\n", jobsTable[jid]->cmd->line);
 	}
-	printf("%s\n", jobsTable[jid-1]->cmd->line);
-	front_pid = jobsTable[jid-1]->pid; // to catch signals 
+
+	front_pid = jobsTable[jid]->pid; // to catch signals 
 	int status;
-	int r = waitpid(jobsTable[jid-1]->pid, &status, WUNTRACED);
+	int r = waitpid(jobsTable[jid]->pid, &status, WUNTRACED);
 	if (r == -1){
 		perror("smash error: waitpid failed");
 		return;
 	}
 	if (WIFSTOPPED(status)) {
-		// CTRL+Z- reinserting the job to the background list
+		// CTRL+Z- move job to the background list
 		Job* job = MALLOC_VALIDATED(Job, sizeof(Job));
-		job->cmd = jobsTable[jid-1]->cmd;
-		jobsTable[jid-1]->cmd = NULL;
+		job->cmd = jobsTable[jid]->cmd;
+		jobsTable[jid]->cmd = NULL;
 		job->state = STOPPED;
 		job->pid = front_pid;
 		removeJob(front_pid);
@@ -499,8 +532,8 @@ void handleBackground( ParsedCommand* cmd, bool bg){
 	int jid = -1;
 	if(cmd->nargs == 0){
 		for (int i = JOBS_NUM_MAX - 1; i >= 0; i--) {
-			if (jobsTable[i] != NULL && jobsTable[i]->state == STOPPED) {
-			jid = i + 1;
+			if (jobsTable[i] != NULL) {
+			jid = i;
 			break;
 			}
 		}
@@ -508,8 +541,13 @@ void handleBackground( ParsedCommand* cmd, bool bg){
 			perrorSmash(cmd->cmd, "jobs list is empty");
 			return;
 		}
-		else if (jobsTable[jid - 1]->state != STOPPED){
-			perrorSmash(cmd->cmd, "there are no stopped jobs to resume");
+		else if (jobsTable[jid]->state != STOPPED){
+			int job_num_len = (jid < 10) ? 1 : (jid == 100) ? 3 : 2;
+			int len_msg = strlen("job id ") + job_num_len + strlen(" is already in background");
+			char* msg = malloc(sizeof(char)*(len_msg+1));
+			snprintf(msg, len_msg+1, "job id %d is already in background", jid);
+			perrorSmash(cmd->cmd, msg);
+			free(msg);
 			return;
 		}
 	}
@@ -524,7 +562,7 @@ void handleBackground( ParsedCommand* cmd, bool bg){
 			perrorSmash(cmd->cmd, "invalid arguments");
 			return;
 		}
-		if (jobsTable[jid-1] == NULL){
+		if (jobsTable[jid] == NULL){
 			int len_msg = strlen("job id ") + strlen(cmd->args[1]) + strlen(" does not exist");
 			char* msg = malloc(sizeof(char)*(len_msg+1));
 			snprintf(msg, len_msg+1, "job id %s does not exist", cmd->args[1]);
@@ -532,7 +570,7 @@ void handleBackground( ParsedCommand* cmd, bool bg){
 			free(msg);
 			return;
 		}
-		else if(jobsTable[jid-1]->state != STOPPED){
+		else if(jobsTable[jid]->state != STOPPED){
 			int len_msg = strlen("job id ") + strlen(cmd->args[1]) + strlen(" is already in background");
 			char* msg = malloc(sizeof(char)*(len_msg+1));
 			snprintf(msg, len_msg+1, "job id %s is already in background", cmd->args[1]);
@@ -546,12 +584,14 @@ void handleBackground( ParsedCommand* cmd, bool bg){
 			perrorSmash(cmd->cmd, "invalid arguments");
 			return;
 		}
-		printf("[%d] %s\n", jid, jobsTable[jid-1]->cmd->cmd);
-		kill(jobsTable[jid-1]->pid, SIGCONT);
+		
+		printf("[%d] %s: %d\n", jid, jobsTable[jid]->cmd->line, jobsTable[jid]->pid);
+		kill(jobsTable[jid]->pid, SIGCONT);
 	
 }//handle background func
 
 void handleQuit(ParsedCommand* cmd, bool bg){
+	// input validation:
 	if (bg){
 		perrorSmash(cmd->cmd, "invalid arguments");
 		return;
@@ -575,12 +615,11 @@ void handleQuit(ParsedCommand* cmd, bool bg){
 		perrorSmash(cmd->cmd, "invalid arguments");
 		return;
 	}
-	int original_jid = 1;
+
 	for (int i = 0; i < JOBS_NUM_MAX; i++)
 	{
 		if(jobsTable[i] == NULL) continue;
-		printf("[%d] %s - ", original_jid, jobsTable[i]->cmd->cmd);
-		original_jid++;
+		printf("[%d] %s - ", jobsTable[i]->jid, jobsTable[i]->cmd->cmd);
 		kill(jobsTable[i]->pid, SIGTERM);
 		printf("sending SIGTERM... ");
 		fflush(stdout); // print without waiting
@@ -596,16 +635,18 @@ void handleQuit(ParsedCommand* cmd, bool bg){
 		freeJob(jobsTable[i]);
         	jobsTable[i] = NULL;
 		}
+	freeCMD(cmd);
 	exit(0);
 }//handle quit function
 
 void handleDiff(ParsedCommand* cmd, bool bg){
+	//input validation:
 	if ((!bg && cmd->nargs != 2) || (bg && cmd->nargs != 3)){
 		perrorSmash(cmd->cmd, "expected 2 arguments");
-		//freeCMD(cmd);
 		return;
 	}
 	
+	// check for valid path to files:
 	struct stat st;
 	if (stat(cmd->args[1], &st) < 0){
 		if (errno == ENOENT){
@@ -616,6 +657,16 @@ void handleDiff(ParsedCommand* cmd, bool bg){
 			perror("smash error: diff failed");
 			return;
 		}//no path
+		
+	}
+	else if(S_ISDIR(st.st_mode)){
+		perrorSmash(cmd->cmd, "paths are not files"); // doesnt work
+		return ;
+	}
+	else if(S_ISREG(st.st_mode)){}
+	else{
+		perror("smash error: paths not a file but not supported error either"); // doesnt work
+		return ;
 	}
 	if (stat(cmd->args[2], &st) < 0){
 		if (errno == ENOENT){
@@ -627,12 +678,25 @@ void handleDiff(ParsedCommand* cmd, bool bg){
 			return;
 		}//no path
 	}
+	else if(S_ISDIR(st.st_mode)){
+		perrorSmash(cmd->cmd, "paths are not files"); // doesnt work
+		return ;
+	}
+	else if(S_ISREG(st.st_mode)){}
+	else{
+		perror("smash error: paths not a file but not supported error either"); // doesnt work
+		return ;
+	}
+
+	// done checking, fetching the files:
 	FILE *fp1 = fopen(cmd->args[1], "r");
     FILE *fp2 = fopen(cmd->args[2], "r");
 	if (fp1 == NULL || fp2 == NULL) {
-		perrorSmash(cmd->cmd, "paths are not files"); // doesnt work
+		perror("smash error: fopen failed"); // doesnt work
         return ;
     }
+
+	// checking if equals:
 	char c1;
 	char c2;
 	if(!bg){
@@ -642,7 +706,9 @@ void handleDiff(ParsedCommand* cmd, bool bg){
 		c2 = fgetc(fp2);
 		if (c1 != c2)
 			{
-				printf("1");
+				printf("1\n");
+				fclose(fp1);
+				fclose(fp2);
 				return;
 			}
 	} while (c1 != EOF && c2 != EOF);
@@ -653,6 +719,8 @@ void handleDiff(ParsedCommand* cmd, bool bg){
 	else{
 		printf("1\n");
 	}
+	fclose(fp1);
+	fclose(fp2);
     return;
 	}
 
@@ -663,6 +731,8 @@ void handleDiff(ParsedCommand* cmd, bool bg){
 	if(pid > 0){
 		job->pid = pid;
 		addJob(job);
+		fclose(fp1);
+		fclose(fp2);
 		return;
 	}
 	else if(pid == 0){
@@ -672,7 +742,10 @@ void handleDiff(ParsedCommand* cmd, bool bg){
 		c2 = fgetc(fp2);
 		if (c1 != c2)
 			{
-				printf("1");
+				printf("1\n");
+				fclose(fp1);
+				fclose(fp2);
+				freeJob(job);
 				exit(SMASH_SUCCESS);
 			}
 	} while (c1 != EOF && c2 != EOF);
@@ -683,13 +756,18 @@ void handleDiff(ParsedCommand* cmd, bool bg){
 	else{
 		printf("1\n");
 	}
-    	exit(SMASH_SUCCESS);
+	fclose(fp1);
+	fclose(fp2);
+	freeJob(job);
+    exit(SMASH_SUCCESS);
 
 	}
 
 	else{
 		perror("smash error: fork failed");
 		freeJob(job);
+		fclose(fp1);
+		fclose(fp2);
 		exit(SMASH_QUIT);
 	}
 
@@ -701,30 +779,26 @@ void handleDiff(ParsedCommand* cmd, bool bg){
 ==================*/
 
 void freeCMD(ParsedCommand* cmd){
-    if (!cmd) return;
-    for (int i = 0; i <= cmd->nargs; i++) {
-        free(cmd->args[i]);
-        cmd->args[i] = NULL;
-    }
+    if (cmd == NULL) return;
 	for (int i = 0; i < ARGS_NUM_MAX; i++) {
-    if (cmd->args[i]) free(cmd->args[i]);
-}//added for saftey
-    free(cmd->cmd);
-    cmd->cmd = NULL;
+    	if (cmd->args[i] != NULL){
+			free(cmd->args[i]); // free strdup
+		} 
+	}//added for saftey
+    if(cmd->cmd) free(cmd->cmd); // free strdup
 
-    free(cmd->line);
-    cmd->line = NULL;
+    if(cmd->line) free(cmd->line); // free strdup
 
-    free(cmd);
+    free(cmd); // free the struct
 }
 
-void freeJob(Job* job){
-	if (!job) return;
-	if (job->cmd)
-		freeCMD(job->cmd);
-		job->cmd = NULL;
-	free(job);
-}
+void freeJob(Job* job) {
+    if (job->cmd) {
+        freeCMD(job->cmd);
+        job->cmd = NULL;
+    }
+    free(job);
+}//free job mem
 void removeJob(pid_t pid){
 	int i = 0;
 	for ( ; i < JOBS_NUM_MAX; i++)
@@ -737,4 +811,4 @@ void removeJob(pid_t pid){
 		}
 	}
 	
-}
+}//remove job from jobTable
